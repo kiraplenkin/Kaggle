@@ -21,8 +21,8 @@ from keras import initializers, regularizers, constraints, optimizers, layers
 from keras.layers import concatenate
 from keras.callbacks import *
 
-embed_size = 300
-max_features = 100000
+EMBED_SIZE = 300
+MAX_FEATURES = 100000
 maxlen = 100
 DATA_SPLIT_SEED = 2018
 
@@ -55,7 +55,7 @@ def load_data():
     test_X = test_df["question_text"].fillna("_na_").values
     
     ## Tokenize the sentences
-    tokenizer = Tokenizer(num_words=max_features)
+    tokenizer = Tokenizer(num_words=MAX_FEATURES)
     tokenizer.fit_on_texts(list(train_X))
     train_X = tokenizer.texts_to_sequences(train_X)
     val_X = tokenizer.texts_to_sequences(val_X)
@@ -83,14 +83,14 @@ def load_glove(word_index):
     
     all_embs = np.stack(embeddings_index.values())
     emb_mean,emb_std = all_embs.mean(), all_embs.std()
-    embed_size = all_embs.shape[1]
+    EMBED_SIZE = all_embs.shape[1]
     
     #word_index = tokenizer.word_index
-    nb_words = min(max_features, len(word_index))
-    embedding_matrix = np.random.normal(emb_mean, emb_std, (nb_words, embed_size))
+    nb_words = min(MAX_FEATURES, len(word_index))
+    embedding_matrix = np.random.normal(emb_mean, emb_std, (nb_words, EMBED_SIZE))
 
     for word, i in word_index.items():
-        if i >= max_features:
+        if i >= MAX_FEATURES:
             continue
         embedding_vector = embeddings_index.get(word)
         if embedding_vector is not None:
@@ -109,14 +109,14 @@ def load_fasttext(word_index):
     
     all_embs = np.stack(embeddings_index.values())
     emb_mean,emb_std = all_embs.mean(), all_embs.std()
-    embed_size = all_embs.shape[1]
+    EMBED_SIZE = all_embs.shape[1]
     
     #word_index = tokenizer.word_index
-    nb_words = min(max_features, len(word_index))
-    embedding_matrix = np.random.normal(emb_mean, emb_std, (nb_words, embed_size))
+    nb_words = min(MAX_FEATURES, len(word_index))
+    embedding_matrix = np.random.normal(emb_mean, emb_std, (nb_words, EMBED_SIZE))
 
     for word, i in word_index.items():
-        if i >= max_features:
+        if i >= MAX_FEATURES:
             continue
         embedding_vector = embeddings_index.get(word)
         if embedding_vector is not None:
@@ -135,14 +135,14 @@ def load_para(word_index):
     
     all_embs = np.stack(embeddings_index.values())
     emb_mean,emb_std = all_embs.mean(), all_embs.std()
-    embed_size = all_embs.shape[1]
+    EMBED_SIZE = all_embs.shape[1]
     
     #word_index = tokenizer.word_index
-    nb_words = min(max_features, len(word_index))
-    embedding_matrix = np.random.normal(emb_mean, emb_std, (nb_words, embed_size))
+    nb_words = min(MAX_FEATURES, len(word_index))
+    embedding_matrix = np.random.normal(emb_mean, emb_std, (nb_words, EMBED_SIZE))
 
     for word, i in word_index.items():
-        if i >= max_features:
+        if i >= MAX_FEATURES:
             continue
         embedding_vector = embeddings_index.get(word)
         if embedding_vector is not None:
@@ -317,7 +317,7 @@ def f1(y_true, y_pred):
 def model_lstm_atten(embedding_matrix):
     
     inp = Input(shape=(maxlen,))
-    x = Embedding(max_features, embed_size, weights=[embedding_matrix], trainable=False)(inp)
+    x = Embedding(MAX_FEATURES, EMBED_SIZE, weights=[embedding_matrix], trainable=False)(inp)
     x = SpatialDropout1D(0.1)(x)
     x = Bidirectional(CuDNNLSTM(40, return_sequences=True))(x)
     y = Bidirectional(CuDNNGRU(40, return_sequences=True))(x)
