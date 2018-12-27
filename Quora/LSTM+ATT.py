@@ -393,5 +393,5 @@ for idx, (train_idx, valid_idx) in enumerate(splits):
 
 
 sub = pd.read_csv('../input/sample_submission.csv')
-sub.prediction = test_meta > 0.33
+sub.prediction = (test_meta>0.35).astype(int)
 sub.to_csv("submission.csv", index=False)
