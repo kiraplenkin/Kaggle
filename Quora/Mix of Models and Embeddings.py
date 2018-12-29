@@ -355,7 +355,7 @@ def threshold_search(y_true, y_proba):
     best_threshold = 0
     best_score = 0
     for threshold in [i * 0.01 for i in range(100)]:
-        score = f1_score(y_true=y_true, y_pred=y_proba > threshold)
+        score = metrics.f1_score(y_true=y_true, y_pred=y_proba > threshold)#################################
         if score > best_score:
             best_threshold = threshold
             best_score = score
@@ -376,22 +376,66 @@ clr = CyclicLR(base_lr=0.001, max_lr=0.002,
                step_size=300., mode='exp_range',
                gamma=0.99994)
 
-"""
-train_meta = np.zeros(train_y.shape)
-test_meta = np.zeros(test_X.shape[0])
-splits = list(StratifiedKFold(n_splits=4, shuffle=True, random_state=DATA_SPLIT_SEED).split(train_X, train_y))
 
-for idx, (train_idx, valid_idx) in enumerate(splits):
-        X_train = train_X[train_idx]
-        y_train = train_y[train_idx]
-        X_val = train_X[valid_idx]
-        y_val = train_y[valid_idx]
-        model = model_lstm_atten(embedding_matrix)
-        pred_val_y, pred_test_y, best_score = train_pred(model, X_train, y_train, X_val, y_val, epochs = 8, callback = [clr,])
-        train_meta[valid_idx] = pred_val_y.reshape(-1)
-        test_meta += pred_test_y.reshape(-1) / len(splits)
-"""
+def train_pred(model, epochs=2):
 
+    for e in range(epochs):
+        model.fit(train_X, train_y, batch_size=512, epochs=1, validation_data=(val_X, val_y))
+        pred_val_y = model.predict([val_X], batch_size=1024, verbose=0)
+
+        best_thresh = 0.5
+        best_score = 0.0
+        for thresh in np.arange(0.1, 0.501, 0.01):
+            thresh = np.round(thresh, 2)
+            score = metrics.f1_score(val_y, (pred_val_y > thresh).astype(int))
+            if score > best_score:
+                best_thresh = thresh
+                best_score = score
+
+        print("Val F1 Score: {:.4f}".format(best_score))
+
+    pred_test_y = model.predict([test_X], batch_size=1024, verbose=0)
+
+    return pred_val_y, pred_test_y, best_score
+
+
+outputs = []
+pred_val_y, pred_test_y, best_score = train_pred(model_lstm_atten(embedding_matrix_1), epochs = 5)
+outputs.append([pred_val_y, pred_test_y, best_score, 'embedding_matrix1'])
+
+
+pred_val_y, pred_test_y, best_score = train_pred(model_lstm_atten(embedding_matrix_2), epochs = 5)
+outputs.append([pred_val_y, pred_test_y, best_score, 'embedding_matrix2'])
+
+
+pred_val_y, pred_test_y, best_score = train_pred(model_lstm_atten(embedding_matrix_3), epochs = 5)
+outputs.append([pred_val_y, pred_test_y, best_score, 'embedding_matrix3'])
+
+
+pred_val_y, pred_test_y, best_score = train_pred(model_lstm_atten(embedding_matrix), epochs = 5)
+outputs.append([pred_val_y, pred_test_y, best_score, 'embedding_matrix'])
+
+
+outputs.sort(key=lambda x: x[2]) # Sort the output by val f1 score
+weights = [i for i in range(1, len(outputs) + 1)]
+weights = [float(i) / sum(weights) for i in weights] 
+
+
+pred_val_y = np.mean([outputs[i][0] for i in range(len(outputs))], axis = 0) # to avoid overfitting, just take average
+
+thresholds = []
+for thresh in np.arange(0.1, 0.501, 0.01):
+    thresh = np.round(thresh, 2)
+    res = metrics.f1_score(val_y, (pred_val_y > thresh).astype(int))
+    thresholds.append([thresh, res])
+    print("F1 score at threshold {0} is {1}".format(thresh, res))
+    
+thresholds.sort(key=lambda x: x[1], reverse=True)
+best_thresh = thresholds[0][0]
+
+
+
+"""
 #First model
 model1 = model_lstm_atten(embedding_matrix_1)
 model1.fit(train_X, train_y, batch_size=512, epochs=5, validation_data=(val_X, val_y))
@@ -426,13 +470,16 @@ for thresh in np.arange(0.1, 0.501, 0.01):
     print("F1 score at threshold {0} is {1}".format(thresh, metrics.f1_score(val_y, (pred3_val_y>thresh).astype(int))))
 
 pred3_test_y = model3.predict([test_X], batch_size=1024, verbose=1)
-
+"""
 
 
 sub = pd.read_csv('../input/sample_submission.csv')
 
-pred_test_y = 0.33*pred1_test_y + 0.33*pred2_test_y + 0.34*pred3_test_y
-pred_test_y = (pred_test_y>0.35).astype(int)
+pred_test_y = np.mean([outputs[i][1] for i in range(len(outputs))], axis = 0)
+pred_test_y = (pred_test_y > best_thresh).astype(int)
+
+#pred_test_y = 0.33*pred1_test_y + 0.33*pred2_test_y + 0.34*pred3_test_y
+#pred_test_y = (pred_test_y>0.35).astype(int)
 out_df = pd.DataFrame({"qid":sub["qid"].values})
 out_df['prediction'] = pred_test_y
 out_df.to_csv("submission.csv", index=False)
