@@ -1,5 +1,4 @@
 import os
-import time
 import numpy as np 
 import pandas as pd 
 from tqdm import tqdm
@@ -370,7 +369,7 @@ embedding_matrix_1 = load_glove(word_index)
 embedding_matrix_2 = load_fasttext(word_index)
 embedding_matrix_3 = load_para(word_index)
 
-embedding_matrix = np.mean([embedding_matrix_1, embedding_matrix_2, embedding_matrix_3], axis = 0)
+#embedding_matrix = np.mean([embedding_matrix_1, embedding_matrix_2, embedding_matrix_3], axis = 0)
 #np.shape(embedding_matrix)
 
 clr = CyclicLR(base_lr=0.001, max_lr=0.002,
@@ -393,21 +392,50 @@ for idx, (train_idx, valid_idx) in enumerate(splits):
         test_meta += pred_test_y.reshape(-1) / len(splits)
 """
 
-model = model_lstm_atten(embedding_matrix)
-model.fit(train_X, train_y, batch_size=512, epochs=2, validation_data=(val_X, val_y))
+#First model
+model1 = model_lstm_atten(embedding_matrix_1)
+model1.fit(train_X, train_y, batch_size=512, epochs=5, validation_data=(val_X, val_y))
 
-pred_val_y = model.predict([val_X], batch_size=1024, verbose=1)
+pred1_val_y = model1.predict([val_X], batch_size=1024, verbose=1)
 for thresh in np.arange(0.1, 0.501, 0.01):
     thresh = np.round(thresh, 2)
-    print("F1 score at threshold {0} is {1}".format(thresh, metrics.f1_score(val_y, (pred_paragram_val_y>thresh).astype(int))))
+    print("F1 score at threshold {0} is {1}".format(thresh, metrics.f1_score(val_y, (pred1_val_y>thresh).astype(int))))
 
-pred_test_y = model.predict([test_X], batch_size=1024, verbose=1)
+pred1_test_y = model1.predict([test_X], batch_size=1024, verbose=1)
 
+
+#Second model
+model2 = model_lstm_atten(embedding_matrix_2)
+model2.fit(train_X, train_y, batch_size=512, epochs=5, validation_data=(val_X, val_y))
+
+pred2_val_y = model2.predict([val_X], batch_size=1024, verbose=1)
+for thresh in np.arange(0.1, 0.501, 0.01):
+    thresh = np.round(thresh, 2)
+    print("F1 score at threshold {0} is {1}".format(thresh, metrics.f1_score(val_y, (pred2_val_y>thresh).astype(int))))
+
+pred2_test_y = model2.predict([test_X], batch_size=1024, verbose=1)
+
+
+#Third model
+model3 = model_lstm_atten(embedding_matrix_3)
+model3.fit(train_X, train_y, batch_size=512, epochs=5, validation_data=(val_X, val_y))
+
+pred3_val_y = model3.predict([val_X], batch_size=1024, verbose=1)
+for thresh in np.arange(0.1, 0.501, 0.01):
+    thresh = np.round(thresh, 2)
+    print("F1 score at threshold {0} is {1}".format(thresh, metrics.f1_score(val_y, (pred3_val_y>thresh).astype(int))))
+
+pred3_test_y = model3.predict([test_X], batch_size=1024, verbose=1)
+
+
+
+sub = pd.read_csv('../input/sample_submission.csv')
+
+pred_test_y = 0.33*pred1_test_y + 0.33*pred2_test_y + 0.34*pred3_test_y
 pred_test_y = (pred_test_y>0.35).astype(int)
-out_df = pd.DataFrame({"qid":test_df["qid"].values})
+out_df = pd.DataFrame({"qid":sub["qid"].values})
 out_df['prediction'] = pred_test_y
 out_df.to_csv("submission.csv", index=False)
 
-#sub = pd.read_csv('../input/sample_submission.csv')
 #sub.prediction = (test_meta>0.35).astype(int)
-#sub.to_csv("submission.csv", index=False)
+#sub.to_csv("submission.csv",sub
