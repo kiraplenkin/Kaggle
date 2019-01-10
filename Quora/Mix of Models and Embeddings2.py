@@ -23,7 +23,7 @@ from keras.layers import concatenate
 
 EMBED_SIZE = 300
 MAX_FEATURES = 100000
-MAXLEN = 70
+MAXLEN = 100
 
 puncts = [',', '.', '"', ':', ')', '(', '-', '!', '?', '|', ';', "'", '$', '&', '/', '[', ']', '>', '%', '=', '#', '*', '+', '\\', '•',  '~', '@', '£', 
  '·', '_', '{', '}', '©', '^', '®', '`',  '<', '→', '°', '€', '™', '›',  '♥', '←', '×', '§', '″', '′', 'Â', '█', '½', 'à', '…', 
@@ -339,7 +339,7 @@ def model_gru_atten(embedding_matrix):
 def train_pred(model, epochs=2):
     
     for e in range(epochs):
-        model.fit(train_X, train_y, batch_size=512, epochs=1, validation_data=(val_X, val_y))
+        model.fit(train_X, train_y, batch_size=512, epochs=2, validation_data=(val_X, val_y))
         pred_val_y = model.predict([val_X], batch_size=1024, verbose=0)
 
         best_thresh = 0.5
@@ -376,17 +376,17 @@ outputs.append([pred_val_y, pred_test_y, best_score, 'model_lstm_atten_embedding
 pred_val_y, pred_test_y, best_score = train_pred(model_lstm_atten(embedding_matrix), epochs = 3)
 outputs.append([pred_val_y, pred_test_y, best_score, 'model_lstm_atten All embed'])
 
-pred_val_y, pred_test_y, best_score = train_pred(model_gru_atten(embedding_matrix), epochs = 2)
-outputs.append([pred_val_y, pred_test_y, best_score, 'model_gru_atten All embed'])
+#pred_val_y, pred_test_y, best_score = train_pred(model_gru_atten(embedding_matrix), epochs = 2)
+#outputs.append([pred_val_y, pred_test_y, best_score, 'model_gru_atten All embed'])
 
-pred_val_y, pred_test_y, best_score = train_pred(model_gru_atten(embedding_matrix_1), epochs = 2)
-outputs.append([pred_val_y, pred_test_y, best_score, 'mdoel_gru_atten Glove'])
+#pred_val_y, pred_test_y, best_score = train_pred(model_gru_atten(embedding_matrix_1), epochs = 2)
+#outputs.append([pred_val_y, pred_test_y, best_score, 'mdoel_gru_atten Glove'])
 
-pred_val_y, pred_test_y, best_score = train_pred(model_gru_atten(embedding_matrix_1), epochs = 2)
-outputs.append([pred_val_y, pred_test_y, best_score, 'mdoel_gru_atten Glove'])
+#pred_val_y, pred_test_y, best_score = train_pred(model_gru_atten(embedding_matrix_1), epochs = 2)
+#outputs.append([pred_val_y, pred_test_y, best_score, 'mdoel_gru_atten Glove'])
 
-pred_val_y, pred_test_y, best_score = train_pred(model_lstm_du(embedding_matrix), epochs = 2)
-outputs.append([pred_val_y, pred_test_y, best_score, 'model_lstm_du All embmed'])
+#pred_val_y, pred_test_y, best_score = train_pred(model_lstm_du(embedding_matrix), epochs = 2)
+#outputs.append([pred_val_y, pred_test_y, best_score, 'model_lstm_du All embmed'])
 
 
 outputs.sort(key=lambda x: x[2]) 
