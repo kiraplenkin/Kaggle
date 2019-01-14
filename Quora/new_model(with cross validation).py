@@ -1,12 +1,12 @@
 import os
+import gc
 import re
 import numpy as np 
 import pandas as pd 
 from tqdm import tqdm
 import math
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn import metrics
-from sklearn.linear_model import LinearRegression
 
 from keras.preprocessing.text import Tokenizer
 from keras.preprocessing.sequence import pad_sequences
@@ -127,6 +127,7 @@ class Attention(Layer):
     def compute_output_shape(self, input_shape):
         return input_shape[0],  self.features_dim
 
+
 def clean_text(x):
     x = str(x) 
     for punct in puncts:
@@ -138,6 +139,7 @@ def clean_text(x):
     for punct in '?!.,"#$%\'()*+-/:;<=>@[\\]^_`{|}~' + '“”’':
         x = x.replace(punct, '')
     return x
+
 
 def clean_numbers(x):
     x = re.sub('[0-9]{5,}', '#####', x)
@@ -175,41 +177,34 @@ def load_data():
     train_df['question_text'] = train_df['question_text'].apply(lambda x: replace_typical_misspell(x))
     test_df['question_text'] = test_df['question_text'].apply(lambda x: replace_typical_misspell(x))
 
-    train_df = train_df.drop(train_df.query('Target == 0').sample(frac=.80).index) # balanced classes
-
-    train_df, val_df = train_test_split(train_df, test_size=0.2, random_state=42)
-    
+       
     # Fill up the missing values
     train_X = train_df['question_text'].fillna('_na_').values
-    val_X = val_df['question_text'].fillna('_na_').values
     test_X = test_df['question_text'].fillna('_na_').values
     
     # Tokenize the sentences
     tokenizer = Tokenizer(num_words=MAX_FEATURES)
     tokenizer.fit_on_texts(list(train_X))
     train_X = tokenizer.texts_to_sequences(train_X)
-    val_X = tokenizer.texts_to_sequences(val_X)
     test_X = tokenizer.texts_to_sequences(test_X)
     
     # Pad the sentences 
     train_X = pad_sequences(train_X, maxlen=MAXLEN)
-    val_X = pad_sequences(val_X, maxlen=MAXLEN)
     test_X = pad_sequences(test_X, maxlen=MAXLEN)
     
     # Get the target values
     train_y = train_df['target'].values
-    val_y = val_df['target'].values
 
     # Shuffling the data
     np.random.seed(42)
     trn_idx = np.random.permutation(len(train_X))
-    val_idx = np.random.permutation(len(val_X))
     train_X = train_X[trn_idx]
-    val_X = val_X[val_idx]
     train_y = train_y[trn_idx]
-    val_y = val_y[val_idx]
 
-    return train_X, val_X, test_X, train_y, val_y, tokenizer.word_index
+    del train_df, test_df
+    gc.collect()
+
+    return train_X, test_X, train_y, tokenizer.word_index
 
 
 def load_glove(word_index):
@@ -290,6 +285,51 @@ def load_para(word_index):
     return embedding_matrix
 
 
+def model_lstm_atten(embedding_matrix):
+    
+    inp = Input(shape=(MAXLEN,))
+    x = Embedding(MAX_FEATURES, EMBED_SIZE, weights=[embedding_matrix], trainable=False)(inp)
+    x = SpatialDropout1D(0.1)(x)
+    x = Bidirectional(CuDNNLSTM(40, return_sequences=True))(x)
+    y = Bidirectional(CuDNNGRU(40, return_sequences=True))(x)
+    
+    atten_1 = Attention(MAXLEN)(x)
+    atten_2 = Attention(MAXLEN)(y)
+    avg_pool = GlobalAveragePooling1D()(y)
+    max_pool = GlobalMaxPooling1D()(y)
+    
+    conc = concatenate([atten_1, atten_2, avg_pool, max_pool])
+    conc = Dense(16, activation='relu')(conc)
+    conc = Dropout(0.1)(conc)
+    outp = Dense(1, activation='sigmoid')(conc)    
+
+    model = Model(inputs=inp, outputs=outp)
+    model.compile(loss='binary_crossentropy', optimizer='adam', metrics=[f1])
+    
+    return model
+
+
+def train_pred(model, train_X, train_y, val_X, val_y, epochs=2, callback=None):
+    
+    for epoch in range(epochs):
+        model.fit(train_X, train_y, batch_size=512, epochs=1, callbacks=callback)
+        pred_val_y = model.predict([val_X], batch_size=2048, verbose=0)
+        pred_test_y = model.predict([test_X], batch_size=2048, verbose=0)
+
+        best_thresh = 0.5
+        best_score = 0.0
+        for thresh in np.arange(0.1, 0.501, 0.01):
+            thresh = np.round(thresh, 2)
+            score = metrics.f1_score(val_y, (pred_val_y > thresh).astype(int))
+            if score > best_score:
+                best_thresh = thresh
+                best_score = score
+
+        print("Val F1 Score: {:.4f}".format(best_score))
+
+    return pred_val_y, pred_test_y, best_score
+
+
 def f1(y_true, y_pred):
 
     def recall(y_true, y_pred):
@@ -315,53 +355,21 @@ def f1(y_true, y_pred):
     return 2*((precision*recall)/(precision+recall+K.epsilon()))
 
 
-def model_lstm_atten(embedding_matrix):
+def threshold_search(y_true, y_proba):
     
-    inp = Input(shape=(MAXLEN,))
-    x = Embedding(MAX_FEATURES, EMBED_SIZE, weights=[embedding_matrix], trainable=False)(inp)
-    x = SpatialDropout1D(0.1)(x)
-    x = Bidirectional(CuDNNLSTM(40, return_sequences=True))(x)
-    y = Bidirectional(CuDNNGRU(40, return_sequences=True))(x)
-    
-    atten_1 = Attention(MAXLEN)(x)
-    atten_2 = Attention(MAXLEN)(y)
-    avg_pool = GlobalAveragePooling1D()(y)
-    max_pool = GlobalMaxPooling1D()(y)
-    
-    conc = concatenate([atten_1, atten_2, avg_pool, max_pool])
-    conc = Dense(16, activation='relu')(conc)
-    conc = Dropout(0.1)(conc)
-    outp = Dense(1, activation='sigmoid')(conc)    
+    best_threshold = 0
+    best_score = 0
+    for threshod in [i * 0.1 for i in range(100)]:
+        score = f1_score(y_true=y_true, y_pred=y_proba > threshod)
+        if score > best_score:
+            best_threshold = threshod
+            best_score = score
+    search_result = {'threshold': best_threshold, 'f1': best_score}
 
-    model = Model(inputs=inp, outputs=outp)
-    model.compile(loss='binary_crossentropy', optimizer='adam', metrics=[f1])
-    
-    return model
+    return search_result
 
 
-def train_pred(model, epochs=2):
-    
-    for e in range(epochs):
-        model.fit(train_X, train_y, batch_size=512, epochs=3, validation_data=(val_X, val_y))
-        pred_val_y = model.predict([val_X], batch_size=1024, verbose=0)
-
-        best_thresh = 0.5
-        best_score = 0.0
-        for thresh in np.arange(0.1, 0.501, 0.01):
-            thresh = np.round(thresh, 2)
-            score = metrics.f1_score(val_y, (pred_val_y > thresh).astype(int))
-            if score > best_score:
-                best_thresh = thresh
-                best_score = score
-
-        print("Val F1 Score: {:.4f}".format(best_score))
-
-    pred_test_y = model.predict([test_X], batch_size=1024, verbose=0)
-
-    return pred_val_y, pred_test_y, best_score
-
-
-train_X, val_X, test_X, train_y, val_y, word_index = load_data()
+train_X, test_X, train_y, word_index = load_data()
 
 
 embedding_matrix_1 = load_glove(word_index)
@@ -371,42 +379,30 @@ embedding_matrix_3 = load_para(word_index)
 
 embedding_matrix = np.mean([embedding_matrix_1, embedding_matrix_3], axis = 0)
 
+count = 0
 
-outputs = []
+train_meta = np.zeros(train_y.shape)
+test_meta = np.zeros(test_X.shape[0])
 
-pred_val_y, pred_test_y, best_score = train_pred(model_lstm_atten(embedding_matrix_1), epochs = 3)
-outputs.append([pred_val_y, pred_test_y, best_score, 'model_lstm_atten only Glove'])
+splits = list(StratifiedKFold(n_splits=5, shuffle=True, random_state=42).split(train_X, train_y))
 
-pred_val_y, pred_test_y, best_score = train_pred(model_lstm_atten(embedding_matrix_3), epochs = 3)
-outputs.append([pred_val_y, pred_test_y, best_score, 'model_lstm_atten_embedding only Para'])
-
-pred_val_y, pred_test_y, best_score = train_pred(model_lstm_atten(embedding_matrix), epochs = 3)
-outputs.append([pred_val_y, pred_test_y, best_score, 'model_lstm_atten All embed'])
-
-
-outputs.sort(key=lambda x: x[2]) 
-weights = [i for i in range(1, len(outputs) + 1)]
-weights = [float(i) / sum(weights) for i in weights] 
-
-
-pred_val_y = np.mean([outputs[i][0] for i in range(len(outputs))], axis = 0)
-
-thresholds = []
-for thresh in np.arange(0.1, 0.501, 0.01):
-    thresh = np.round(thresh, 2)
-    res = metrics.f1_score(val_y, (pred_val_y > thresh).astype(int))
-    thresholds.append([thresh, res])
-    print("F1 score at threshold {0} is {1}".format(thresh, res))
-    
-thresholds.sort(key=lambda x: x[1], reverse=True)
-best_thresh = thresholds[0][0]
+for idx, (train_idx, valid_idx) in enumerate(splits):
+    X_train = train_X[train_idx]
+    y_train = train_y[train_idx]
+    X_val = train_X[valid_idx]
+    y_val = train_y[valid_idx]
+    model = model_lstm_atten(embedding_matrix)
+    pred_val_y, pred_test_y, best_score = train_pred(model, X_train, y_train, X_val, y_val, epochs=5)
+    if best_score > 0.68:
+        train_meta[valid_idx] = pred_val_y.reshape(-1)
+        test_meta += pred_test_y.reshape(-1)
+        count += 1
+if count > 0:
+    test_meta = test_meta / count
 
 
-pred_test_y = np.mean([outputs[i][1] for i in range(len(outputs))], axis = 0)
-pred_test_y = (pred_test_y > best_thresh).astype(int)
-
+search_result = threshold_search(train_y, train_meta)
 
 sub = pd.read_csv('../input/sample_submission.csv')
-out_df = pd.DataFrame({"qid":sub["qid"].values})
-out_df['prediction'] = pred_test_y
-out_df.to_csv("submission.csv", index=False)
+sub.prediction = test_meta > search_result['threshold']
+sub.to_csv('submission.csv', index=False)
