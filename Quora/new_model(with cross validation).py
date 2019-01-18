@@ -6,7 +6,7 @@ import pandas as pd
 from tqdm import tqdm
 import math
 from sklearn.model_selection import train_test_split, StratifiedKFold
-from sklearn import metrics
+from sklearn.metrics import f1_score
 
 from keras.preprocessing.text import Tokenizer
 from keras.preprocessing.sequence import pad_sequences
@@ -20,6 +20,7 @@ from keras import backend as K
 from keras.engine.topology import Layer
 from keras import initializers, regularizers, constraints, optimizers, layers
 from keras.layers import concatenate
+from keras.callbacks import *
 
 EMBED_SIZE = 300
 MAX_FEATURES = 100000
@@ -126,6 +127,78 @@ class Attention(Layer):
 
     def compute_output_shape(self, input_shape):
         return input_shape[0],  self.features_dim
+
+class CyclicLR(Callback):
+    
+    def __init__(self, base_lr=0.001, max_lr=0.006, step_size=2000., mode='triangular',
+                 gamma=1., scale_fn=None, scale_mode='cycle'):
+
+        super(CyclicLR, self).__init__()
+
+        self.base_lr = base_lr
+        self.max_lr = max_lr
+        self.step_size = step_size
+        self.mode = mode
+        self.gamma = gamma
+        if scale_fn == None:
+            if self.mode == 'triangular':
+                self.scale_fn = lambda x: 1.
+                self.scale_mode = 'cycle'
+            elif self.mode == 'triangular2':
+                self.scale_fn = lambda x: 1/(2.**(x-1))
+                self.scale_mode = 'cycle'
+            elif self.mode == 'exp_range':
+                self.scale_fn = lambda x: gamma**(x)
+                self.scale_mode = 'iterations'
+        else:
+            self.scale_fn = scale_fn
+            self.scale_mode = scale_mode
+        self.clr_iterations = 0.
+        self.trn_iterations = 0.
+        self.history = {}
+
+        self._reset()
+
+    def _reset(self, new_base_lr=None, new_max_lr=None, new_step_size=None):
+        
+        if new_base_lr != None:
+            self.base_lr = new_base_lr
+        if new_max_lr != None:
+            self.max_lr = new_max_lr
+        if new_step_size != None:
+            self.step_size = new_step_size
+        self.clr_iterations = 0.
+        
+    def clr(self):
+        
+        cycle = np.floor(1+self.clr_iterations/(2*self.step_size))
+        x = np.abs(self.clr_iterations/self.step_size - 2*cycle + 1)
+        if self.scale_mode == 'cycle':
+            return self.base_lr + (self.max_lr-self.base_lr)*np.maximum(0, (1-x))*self.scale_fn(cycle)
+        else:
+            return self.base_lr + (self.max_lr-self.base_lr)*np.maximum(0, (1-x))*self.scale_fn(self.clr_iterations)
+        
+    def on_train_begin(self, logs={}):
+        logs = logs or {}
+
+        if self.clr_iterations == 0:
+            K.set_value(self.model.optimizer.lr, self.base_lr)
+        else:
+            K.set_value(self.model.optimizer.lr, self.clr())        
+            
+    def on_batch_end(self, epoch, logs=None):
+        
+        logs = logs or {}
+        self.trn_iterations += 1
+        self.clr_iterations += 1
+
+        self.history.setdefault('lr', []).append(K.get_value(self.model.optimizer.lr))
+        self.history.setdefault('iterations', []).append(self.trn_iterations)
+
+        for k, v in logs.items():
+            self.history.setdefault(k, []).append(v)
+        
+        K.set_value(self.model.optimizer.lr, self.clr())
 
 
 def clean_text(x):
@@ -285,51 +358,6 @@ def load_para(word_index):
     return embedding_matrix
 
 
-def model_lstm_atten(embedding_matrix):
-    
-    inp = Input(shape=(MAXLEN,))
-    x = Embedding(MAX_FEATURES, EMBED_SIZE, weights=[embedding_matrix], trainable=False)(inp)
-    x = SpatialDropout1D(0.1)(x)
-    x = Bidirectional(CuDNNLSTM(40, return_sequences=True))(x)
-    y = Bidirectional(CuDNNGRU(40, return_sequences=True))(x)
-    
-    atten_1 = Attention(MAXLEN)(x)
-    atten_2 = Attention(MAXLEN)(y)
-    avg_pool = GlobalAveragePooling1D()(y)
-    max_pool = GlobalMaxPooling1D()(y)
-    
-    conc = concatenate([atten_1, atten_2, avg_pool, max_pool])
-    conc = Dense(16, activation='relu')(conc)
-    conc = Dropout(0.1)(conc)
-    outp = Dense(1, activation='sigmoid')(conc)    
-
-    model = Model(inputs=inp, outputs=outp)
-    model.compile(loss='binary_crossentropy', optimizer='adam', metrics=[f1])
-    
-    return model
-
-
-def train_pred(model, train_X, train_y, val_X, val_y, epochs=2, callback=None):
-    
-    for epoch in range(epochs):
-        model.fit(train_X, train_y, batch_size=512, epochs=1, callbacks=callback)
-        pred_val_y = model.predict([val_X], batch_size=2048, verbose=0)
-        pred_test_y = model.predict([test_X], batch_size=2048, verbose=0)
-
-        best_thresh = 0.5
-        best_score = 0.0
-        for thresh in np.arange(0.1, 0.501, 0.01):
-            thresh = np.round(thresh, 2)
-            score = metrics.f1_score(val_y, (pred_val_y > thresh).astype(int))
-            if score > best_score:
-                best_thresh = thresh
-                best_score = score
-
-        print("Val F1 Score: {:.4f}".format(best_score))
-
-    return pred_val_y, pred_test_y, best_score
-
-
 def f1(y_true, y_pred):
 
     def recall(y_true, y_pred):
@@ -355,18 +383,54 @@ def f1(y_true, y_pred):
     return 2*((precision*recall)/(precision+recall+K.epsilon()))
 
 
-def threshold_search(y_true, y_proba):
+def model_lstm_atten(embedding_matrix):
     
-    best_threshold = 0
-    best_score = 0
-    for threshod in [i * 0.1 for i in range(100)]:
-        score = f1_score(y_true=y_true, y_pred=y_proba > threshod)
-        if score > best_score:
-            best_threshold = threshod
-            best_score = score
-    search_result = {'threshold': best_threshold, 'f1': best_score}
+    inp = Input(shape=(MAXLEN,))
+    x = Embedding(MAX_FEATURES, EMBED_SIZE, weights=[embedding_matrix], trainable=False)(inp)
+    x = SpatialDropout1D(0.1)(x)
+    x = Bidirectional(CuDNNLSTM(40, return_sequences=True))(x)
+    y = Bidirectional(CuDNNGRU(40, return_sequences=True))(x)
+    
+    atten_1 = Attention(MAXLEN)(x)
+    atten_2 = Attention(MAXLEN)(y)
+    avg_pool = GlobalAveragePooling1D()(y)
+    max_pool = GlobalMaxPooling1D()(y)
+    
+    conc = concatenate([atten_1, atten_2, avg_pool, max_pool])
+    conc = Dense(16, activation='relu')(conc)
+    conc = Dropout(0.1)(conc)
+    outp = Dense(1, activation='sigmoid')(conc)    
 
-    return search_result
+    model = Model(inputs=inp, outputs=outp)
+    model.compile(loss='binary_crossentropy', optimizer='adam', metrics=[f1])
+    
+    return model
+
+
+def train_pred(model, train_X, train_y, val_X, val_y, epochs=1, callback=None):
+    
+    for epoch in range(epochs):
+        model.fit(train_X, train_y, batch_size=512, epochs=1, callbacks=callback, verbose=0)
+        pred_val_y = model.predict([val_X], batch_size=2048, verbose=0)
+        pred_test_y = model.predict([test_X], batch_size=2048, verbose=0)
+
+        best_thresh = 0.5
+        best_score = 0.0
+        for thresh in np.arange(0.1, 0.501, 0.01):
+            thresh = np.round(thresh, 2)
+            score = f1_score(val_y, (pred_val_y > thresh).astype(int))
+            if score > best_score:
+                best_thresh = thresh
+                best_score = score
+
+        print("Val F1 Score: {:.4f}".format(best_score))
+
+    return pred_val_y, pred_test_y, best_score
+  
+
+clr = CyclicLR(base_lr=0.001, max_lr=0.002,
+               step_size=300., mode='exp_range',
+               gamma=0.99994) 
 
 
 train_X, test_X, train_y, word_index = load_data()
@@ -375,34 +439,87 @@ train_X, test_X, train_y, word_index = load_data()
 embedding_matrix_1 = load_glove(word_index)
 #embedding_matrix_2 = load_fasttext(word_index)
 embedding_matrix_3 = load_para(word_index)
-
-
+ 
 embedding_matrix = np.mean([embedding_matrix_1, embedding_matrix_3], axis = 0)
-
-count = 0
+             
 
 train_meta = np.zeros(train_y.shape)
 test_meta = np.zeros(test_X.shape[0])
+outputs = []
 
-splits = list(StratifiedKFold(n_splits=5, shuffle=True, random_state=42).split(train_X, train_y))
+splits = list(StratifiedKFold(n_splits=3, shuffle=True, random_state=42).split(train_X, train_y))
 
+# first model
 for idx, (train_idx, valid_idx) in enumerate(splits):
     X_train = train_X[train_idx]
     y_train = train_y[train_idx]
     X_val = train_X[valid_idx]
     y_val = train_y[valid_idx]
     model = model_lstm_atten(embedding_matrix)
-    pred_val_y, pred_test_y, best_score = train_pred(model, X_train, y_train, X_val, y_val, epochs=5)
-    if best_score > 0.68:
-        train_meta[valid_idx] = pred_val_y.reshape(-1)
-        test_meta += pred_test_y.reshape(-1)
-        count += 1
-if count > 0:
-    test_meta = test_meta / count
+    pred_val_y, pred_test_y, best_score = train_pred(model, X_train, y_train, X_val, y_val, epochs = 2, callback = [clr,])
+    train_meta[valid_idx] = pred_val_y.reshape(-1)
+    test_meta += pred_test_y.reshape(-1) / len(splits)
+outputs.append([train_meta[valid_idx], test_meta, 'model_lstm_atten All embed'])
 
 
-search_result = threshold_search(train_y, train_meta)
+# second model
+for idx, (train_idx, valid_idx) in enumerate(splits):
+    X_train = train_X[train_idx]
+    y_train = train_y[train_idx]
+    X_val = train_X[valid_idx]
+    y_val = train_y[valid_idx]
+    model = model_lstm_atten(embedding_matrix_1)
+    pred_val_y, pred_test_y, best_score = train_pred(model, X_train, y_train, X_val, y_val, epochs = 2, callback = [clr,])
+    train_meta[valid_idx] = pred_val_y.reshape(-1)
+    test_meta += pred_test_y.reshape(-1) / len(splits)
+outputs.append([train_meta[valid_idx], test_meta, 'model_lstm_atten Glove embed'])
+
+
+# third model
+for idx, (train_idx, valid_idx) in enumerate(splits):
+    X_train = train_X[train_idx]
+    y_train = train_y[train_idx]
+    X_val = train_X[valid_idx]
+    y_val = train_y[valid_idx]
+    model = model_lstm_atten(embedding_matrix_3)
+    pred_val_y, pred_test_y, best_score = train_pred(model, X_train, y_train, X_val, y_val, epochs = 2, callback = [clr,])
+    train_meta[valid_idx] = pred_val_y.reshape(-1)
+    test_meta += pred_test_y.reshape(-1) / len(splits)
+outputs.append([train_meta[valid_idx], test_meta, 'model_lstm_atten Para embed'])
+
+outputs.sort(key=lambda x: x[2]) 
+weights = [i for i in range(1, len(outputs) + 1)]
+weights = [float(i) / sum(weights) for i in weights] 
+
+
+pred_val_y = np.mean([outputs[i][0] for i in range(len(outputs))], axis = 0)
+
+thresholds = []
+for thresh in np.arange(0.1, 0.501, 0.01):
+    thresh = np.round(thresh, 2)
+    res = metrics.f1_score(val_y, (pred_val_y > thresh).astype(int))
+    thresholds.append([thresh, res])
+    print("F1 score at threshold {0} is {1}".format(thresh, res))
+    
+thresholds.sort(key=lambda x: x[1], reverse=True)
+best_thresh = thresholds[0][0]
+pred_test_y = np.mean([outputs[i][1] for i in range(len(outputs))], axis = 0)
+pred_test_y = (pred_test_y > best_thresh).astype(int)
+
+
+
+thresholds = []
+for thresh in np.arange(0.1, 0.501, 0.01):
+    thresh = np.round(thresh, 2)
+    res = f1_score(train_y, (train_meta > thresh).astype(int))
+    thresholds.append([thresh, res])
+    #print("F1 score at threshold {} is {}".format(thresh, res))
+thresholds.sort(key=lambda x: x[1], reverse=True)
+best_thresh = thresholds[0][0]
+
+
+
 
 sub = pd.read_csv('../input/sample_submission.csv')
-sub.prediction = test_meta > search_result['threshold']
+sub['prediction'] = (test_meta > best_thresh).astype(int)
 sub.to_csv('submission.csv', index=False)
