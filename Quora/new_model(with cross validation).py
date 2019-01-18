@@ -459,7 +459,7 @@ for idx, (train_idx, valid_idx) in enumerate(splits):
     pred_val_y, pred_test_y, best_score = train_pred(model, X_train, y_train, X_val, y_val, epochs = 2, callback = [clr,])
     train_meta[valid_idx] = pred_val_y.reshape(-1)
     test_meta += pred_test_y.reshape(-1) / len(splits)
-outputs.append([train_meta[valid_idx], test_meta, 'model_lstm_atten All embed'])
+outputs.append([train_meta, test_meta, 'model_lstm_atten All embed'])
 
 
 # second model
@@ -472,7 +472,7 @@ for idx, (train_idx, valid_idx) in enumerate(splits):
     pred_val_y, pred_test_y, best_score = train_pred(model, X_train, y_train, X_val, y_val, epochs = 2, callback = [clr,])
     train_meta[valid_idx] = pred_val_y.reshape(-1)
     test_meta += pred_test_y.reshape(-1) / len(splits)
-outputs.append([train_meta[valid_idx], test_meta, 'model_lstm_atten Glove embed'])
+outputs.append([train_meta, test_meta, 'model_lstm_atten Glove embed'])
 
 
 # third model
@@ -485,41 +485,30 @@ for idx, (train_idx, valid_idx) in enumerate(splits):
     pred_val_y, pred_test_y, best_score = train_pred(model, X_train, y_train, X_val, y_val, epochs = 2, callback = [clr,])
     train_meta[valid_idx] = pred_val_y.reshape(-1)
     test_meta += pred_test_y.reshape(-1) / len(splits)
-outputs.append([train_meta[valid_idx], test_meta, 'model_lstm_atten Para embed'])
+outputs.append([train_meta, test_meta, 'model_lstm_atten Para embed'])
 
 outputs.sort(key=lambda x: x[2]) 
 weights = [i for i in range(1, len(outputs) + 1)]
 weights = [float(i) / sum(weights) for i in weights] 
 
 
-pred_val_y = np.mean([outputs[i][0] for i in range(len(outputs))], axis = 0)
-
-thresholds = []
-for thresh in np.arange(0.1, 0.501, 0.01):
-    thresh = np.round(thresh, 2)
-    res = metrics.f1_score(val_y, (pred_val_y > thresh).astype(int))
-    thresholds.append([thresh, res])
-    print("F1 score at threshold {0} is {1}".format(thresh, res))
-    
-thresholds.sort(key=lambda x: x[1], reverse=True)
-best_thresh = thresholds[0][0]
-pred_test_y = np.mean([outputs[i][1] for i in range(len(outputs))], axis = 0)
-pred_test_y = (pred_test_y > best_thresh).astype(int)
-
-
+train_meta = np.mean([outputs[i][0] for i in range(len(outputs))], axis = 0)
 
 thresholds = []
 for thresh in np.arange(0.1, 0.501, 0.01):
     thresh = np.round(thresh, 2)
     res = f1_score(train_y, (train_meta > thresh).astype(int))
     thresholds.append([thresh, res])
-    #print("F1 score at threshold {} is {}".format(thresh, res))
+    print("F1 score at threshold {0} is {1}".format(thresh, res))
+    
 thresholds.sort(key=lambda x: x[1], reverse=True)
 best_thresh = thresholds[0][0]
 
+test_meta = np.mean([outputs[i][1] for i in range(len(outputs))], axis = 0)
+test_meta = (test_meta > best_thresh).astype(int)
 
 
 
 sub = pd.read_csv('../input/sample_submission.csv')
-sub['prediction'] = (test_meta > best_thresh).astype(int)
+sub['prediction'] = test_meta
 sub.to_csv('submission.csv', index=False)
