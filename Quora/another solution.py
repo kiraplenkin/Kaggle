@@ -1,9 +1,7 @@
-import os
 import re
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-import math
 from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.metrics import f1_score
 
@@ -11,14 +9,13 @@ from keras.preprocessing.text import Tokenizer
 from keras.preprocessing.sequence import pad_sequences
 from keras.layers import Dense, Input, CuDNNLSTM, Embedding, Dropout, Activation, CuDNNGRU, Conv1D
 from keras.layers import Bidirectional, GlobalMaxPool1D, GlobalMaxPooling1D, GlobalAveragePooling1D
-from keras.layers import Input, Embedding, Dense, Conv2D, MaxPool2D, concatenate, Lambda
+from keras.layers import Input, Embedding, Dense, Conv2D, MaxPool2D, concatenate
 from keras.layers import Reshape, Flatten, Concatenate, Dropout, SpatialDropout1D
 from keras.optimizers import Adam
 from keras.models import Model
 from keras import backend as K
 from keras.engine.topology import Layer
-from keras import initializers, regularizers, constraints, optimizers, layers
-from keras.layers import concatenate
+from keras import initializers, regularizers, constraints, optimizers
 
 
 EMBED_SIZE = 300
@@ -333,6 +330,22 @@ def model_cnn(embedding_matrix):
     return model
 
 
+def model_atten(embedding_matrix):
+    inp = Input(shape=(MAXLEN,))
+    x = Embedding(MAX_FEATURES, EMBED_SIZE, weights=[embedding_matrix], trainable=False)(inp)
+    x = Bidirectional(CuDNNLSTM(128, return_sequences=True))(x)
+    x = Bidirectional(CuDNNLSTM(100, return_sequences=True))(x)
+    x = Bidirectional(CuDNNLSTM(64, return_sequences=True))(x)
+    x = Attention(MAXLEN)(x)
+    x = Dense(64, activation="relu")(x)
+    x = Dropout(0.1)(x)
+    x = Dense(1, activation="sigmoid")(x)
+    model = Model(inputs=inp, outputs=x)
+    model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
+
+    return model
+
+
 def threshold_search(y_true, y_proba):
     best_threshold = 0
     best_score = 0
@@ -385,7 +398,7 @@ for idx, (train_idx, valid_idx) in enumerate(splits):
         y_train = train_y[train_idx]
         X_val = train_X[valid_idx]
         y_val = train_y[valid_idx]
-        model = model_cnn(embedding_matrix)
+        model = model_atten(embedding_matrix)
         pred_val_y, pred_test_y, best_score = train_pred(model, X_train, y_train, X_val, y_val, epochs=6)
         train_meta[valid_idx] = pred_val_y.reshape(-1)
         test_meta += pred_test_y.reshape(-1) / len(splits)
