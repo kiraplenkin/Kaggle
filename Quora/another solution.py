@@ -1,7 +1,7 @@
 import os
 import re
-import numpy as np 
-import pandas as pd 
+import numpy as np
+import pandas as pd
 from tqdm import tqdm
 import math
 from sklearn.model_selection import train_test_split
@@ -21,14 +21,15 @@ from keras.engine.topology import Layer
 from keras import initializers, regularizers, constraints, optimizers, layers
 from keras.layers import concatenate
 
+
 EMBED_SIZE = 300
 MAX_FEATURES = 100000
 MAXLEN = 100
 
-puncts = [',', '.', '"', ':', ')', '(', '-', '!', '?', '|', ';', "'", '$', '&', '/', '[', ']', '>', '%', '=', '#', '*', '+', '\\', '•',  '~', '@', '£', 
- '·', '_', '{', '}', '©', '^', '®', '`',  '<', '→', '°', '€', '™', '›',  '♥', '←', '×', '§', '″', '′', 'Â', '█', '½', 'à', '…', 
- '“', '★', '”', '–', '●', 'â', '►', '−', '¢', '²', '¬', '░', '¶', '↑', '±', '¿', '▾', '═', '¦', '║', '―', '¥', '▓', '—', '‹', '─', 
- '▒', '：', '¼', '⊕', '▼', '▪', '†', '■', '’', '▀', '¨', '▄', '♫', '☆', 'é', '¯', '♦', '¤', '▲', 'è', '¸', '¾', 'Ã', '⋅', '‘', '∞', 
+puncts = [',', '.', '"', ':', ')', '(', '-', '!', '?', '|', ';', "'", '$', '&', '/', '[', ']', '>', '%', '=', '#', '*', '+', '\\', '•',  '~', '@', '£',
+ '·', '_', '{', '}', '©', '^', '®', '`',  '<', '→', '°', '€', '™', '›',  '♥', '←', '×', '§', '″', '′', 'Â', '█', '½', 'à', '…',
+ '“', '★', '”', '–', '●', 'â', '►', '−', '¢', '²', '¬', '░', '¶', '↑', '±', '¿', '▾', '═', '¦', '║', '―', '¥', '▓', '—', '‹', '─',
+ '▒', '：', '¼', '⊕', '▼', '▪', '†', '■', '’', '▀', '¨', '▄', '♫', '☆', 'é', '¯', '♦', '¤', '▲', 'è', '¸', '¾', 'Ã', '⋅', '‘', '∞',
  '∙', '）', '↓', '、', '│', '（', '»', '，', '♪', '╩', '╚', '³', '・', '╦', '╣', '╔', '╗', '▬', '❤', 'ï', 'Ø', '¹', '≤', '‡', '√', ]
 
 mispell_dict = {"ain't": "is not", "aren't": "are not","can't": "cannot", "cause": "because", "could've": "could have", "couldn't": "could not",
@@ -129,7 +130,7 @@ class Attention(Layer):
 
 
 def clean_text(x):
-    x = str(x) 
+    x = str(x)
     for punct in puncts:
         x = x.replace(punct, f' {punct} ')
     for punct in "/-'":
@@ -153,6 +154,7 @@ def _get_mispell(mispell_dict):
     mispell_re = re.compile('(%s)' % '|'.join(mispell_dict.keys()))
     return mispell_dict, mispell_re
 
+
 mispellings, mispellings_re = _get_mispell(mispell_dict)
 
 
@@ -167,7 +169,7 @@ def load_data():
 
     train_df = pd.read_csv('../input/train.csv')
     test_df = pd.read_csv('../input/test.csv')
-    
+
     train_df['question_text'] = train_df['question_text'].str.lower()
     test_df['question_text'] = test_df['question_text'].str.lower()
     train_df['question_text'] = train_df['question_text'].apply(lambda x: clean_text(x))
@@ -178,24 +180,24 @@ def load_data():
     test_df['question_text'] = test_df['question_text'].apply(lambda x: replace_typical_misspell(x))
 
     train_df, val_df = train_test_split(train_df, test_size=0.2, random_state=42)
-    
+
     # Fill up the missing values
     train_X = train_df['question_text'].fillna('_na_').values
     val_X = val_df['question_text'].fillna('_na_').values
     test_X = test_df['question_text'].fillna('_na_').values
-    
+
     # Tokenize the sentences
     tokenizer = Tokenizer(num_words=MAX_FEATURES)
     tokenizer.fit_on_texts(list(train_X))
     train_X = tokenizer.texts_to_sequences(train_X)
     val_X = tokenizer.texts_to_sequences(val_X)
     test_X = tokenizer.texts_to_sequences(test_X)
-    
-    # Pad the sentences 
+
+    # Pad the sentences
     train_X = pad_sequences(train_X, maxlen=MAXLEN)
     val_X = pad_sequences(val_X, maxlen=MAXLEN)
     test_X = pad_sequences(test_X, maxlen=MAXLEN)
-    
+
     # Get the target values
     train_y = train_df['target'].values
     val_y = val_df['target'].values
@@ -213,18 +215,17 @@ def load_data():
 
 
 def load_glove(word_index):
-
     EMBEDDING_FILE = '../input/embeddings/glove.840B.300d/glove.840B.300d.txt'
 
-    def get_coefs(word,*arr):
+    def get_coefs(word, *arr):
         return word, np.asarray(arr, dtype='float32')
 
     embeddings_index = dict(get_coefs(*o.split(' ')) for o in open(EMBEDDING_FILE))
-    
+
     all_embs = np.stack(embeddings_index.values())
-    emb_mean,emb_std = all_embs.mean(), all_embs.std()
+    emb_mean, emb_std = all_embs.mean(), all_embs.std()
     EMBED_SIZE = all_embs.shape[1]
-    
+
     nb_words = min(MAX_FEATURES, len(word_index))
     embedding_matrix = np.random.normal(emb_mean, emb_std, (nb_words, EMBED_SIZE))
 
@@ -239,18 +240,17 @@ def load_glove(word_index):
 
 
 def load_fasttext(word_index):
-
     EMBEDDING_FILE = '../input/embeddings/wiki-news-300d-1M/wiki-news-300d-1M.vec'
 
-    def get_coefs(word,*arr):
+    def get_coefs(word, *arr):
         return word, np.asarray(arr, dtype='float32')
 
-    embeddings_index = dict(get_coefs(*o.split(' ')) for o in open(EMBEDDING_FILE) if len(o)>100)
-    
+    embeddings_index = dict(get_coefs(*o.split(' ')) for o in open(EMBEDDING_FILE) if len(o) > 100)
+
     all_embs = np.stack(embeddings_index.values())
-    emb_mean,emb_std = all_embs.mean(), all_embs.std()
+    emb_mean, emb_std = all_embs.mean(), all_embs.std()
     EMBED_SIZE = all_embs.shape[1]
-    
+
     nb_words = min(MAX_FEATURES, len(word_index))
     embedding_matrix = np.random.normal(emb_mean, emb_std, (nb_words, EMBED_SIZE))
 
@@ -265,18 +265,18 @@ def load_fasttext(word_index):
 
 
 def load_para(word_index):
-
     EMBEDDING_FILE = '../input/embeddings/paragram_300_sl999/paragram_300_sl999.txt'
 
-    def get_coefs(word,*arr):
+    def get_coefs(word, *arr):
         return word, np.asarray(arr, dtype='float32')
 
-    embeddings_index = dict(get_coefs(*o.split(' ')) for o in open(EMBEDDING_FILE, encoding='utf8', errors='ignore') if len(o)>100)
-    
+    embeddings_index = dict(
+        get_coefs(*o.split(' ')) for o in open(EMBEDDING_FILE, encoding='utf8', errors='ignore') if len(o) > 100)
+
     all_embs = np.stack(embeddings_index.values())
-    emb_mean,emb_std = all_embs.mean(), all_embs.std()
+    emb_mean, emb_std = all_embs.mean(), all_embs.std()
     EMBED_SIZE = all_embs.shape[1]
-    
+
     nb_words = min(MAX_FEATURES, len(word_index))
     embedding_matrix = np.random.normal(emb_mean, emb_std, (nb_words, EMBED_SIZE))
 
@@ -291,9 +291,7 @@ def load_para(word_index):
 
 
 def f1(y_true, y_pred):
-
     def recall(y_true, y_pred):
-        
         true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
         possible_positives = K.sum(K.round(K.clip(y_true, 0, 1)))
         recall = true_positives / (possible_positives + K.epsilon())
@@ -301,7 +299,6 @@ def f1(y_true, y_pred):
         return recall
 
     def precision(y_true, y_pred):
-        
         true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
         predicted_positives = K.sum(K.round(K.clip(y_pred, 0, 1)))
         precision = true_positives / (predicted_positives + K.epsilon())
@@ -311,35 +308,10 @@ def f1(y_true, y_pred):
     precision = precision(y_true, y_pred)
     recall = recall(y_true, y_pred)
 
-    return 2*((precision*recall)/(precision+recall+K.epsilon()))
-
-
-def model_lstm_atten(embedding_matrix):
-    
-    inp = Input(shape=(MAXLEN,))
-    x = Embedding(MAX_FEATURES, EMBED_SIZE, weights=[embedding_matrix], trainable=False)(inp)
-    x = SpatialDropout1D(0.1)(x)
-    x = Bidirectional(CuDNNLSTM(40, return_sequences=True))(x)
-    y = Bidirectional(CuDNNGRU(40, return_sequences=True))(x)
-    
-    atten_1 = Attention(MAXLEN)(x)
-    atten_2 = Attention(MAXLEN)(y)
-    avg_pool = GlobalAveragePooling1D()(y)
-    max_pool = GlobalMaxPooling1D()(y)
-    
-    conc = concatenate([atten_1, atten_2, avg_pool, max_pool])
-    conc = Dense(16, activation='relu')(conc)
-    conc = Dropout(0.1)(conc)
-    outp = Dense(1, activation='sigmoid')(conc)    
-
-    model = Model(inputs=inp, outputs=outp)
-    model.compile(loss='binary_crossentropy', optimizer='adam', metrics=[f1])
-    
-    return model
+    return 2 * ((precision * recall) / (precision + recall + K.epsilon()))
 
 
 def train_pred(model, epochs=2):
-    
     for e in range(epochs):
         model.fit(train_X, train_y, batch_size=512, epochs=2, validation_data=(val_X, val_y))
         pred_val_y = model.predict([val_X], batch_size=1024, verbose=0)
@@ -362,7 +334,6 @@ def train_pred(model, epochs=2):
 
 train_X, val_X, test_X, train_y, val_y, word_index = load_data()
 
-
 embedding_matrix_1 = load_glove(word_index)
 emdedding_matrix_2 = load_fasttext(word_index)
 embedding_matrix_3 = load_para(word_index)
@@ -370,41 +341,4 @@ embedding_matrix_3 = load_para(word_index)
 embedding_matrix = np.mean([embedding_matrix_1, embedding_matrix_3], axis=0)
 
 
-outputs = []
 
-pred_val_y, pred_test_y, best_score = train_pred(model_lstm_atten(embedding_matrix_1), epochs = 3)
-outputs.append([pred_val_y, pred_test_y, best_score, 'model_lstm_atten only Glove'])
-
-pred_val_y, pred_test_y, best_score = train_pred(model_lstm_atten(embedding_matrix_3), epochs = 3)
-outputs.append([pred_val_y, pred_test_y, best_score, 'model_lstm_atten_embedding only Para'])
-
-pred_val_y, pred_test_y, best_score = train_pred(model_lstm_atten(embedding_matrix), epochs = 3)
-outputs.append([pred_val_y, pred_test_y, best_score, 'model_lstm_atten All embed'])
-
-
-outputs.sort(key=lambda x: x[2]) 
-weights = [i for i in range(1, len(outputs) + 1)]
-weights = [float(i) / sum(weights) for i in weights] 
-
-
-pred_val_y = np.mean([outputs[i][0] for i in range(len(outputs))], axis = 0)
-
-thresholds = []
-for thresh in np.arange(0.1, 0.501, 0.01):
-    thresh = np.round(thresh, 2)
-    res = metrics.f1_score(val_y, (pred_val_y > thresh).astype(int))
-    thresholds.append([thresh, res])
-    print("F1 score at threshold {0} is {1}".format(thresh, res))
-    
-thresholds.sort(key=lambda x: x[1], reverse=True)
-best_thresh = thresholds[0][0]
-
-
-pred_test_y = np.mean([outputs[i][1] for i in range(len(outputs))], axis = 0)
-pred_test_y = (pred_test_y > best_thresh).astype(int)
-
-
-sub = pd.read_csv('../input/sample_submission.csv')
-out_df = pd.DataFrame({"qid": sub["qid"].values})
-out_df['prediction'] = pred_test_y
-out_df.to_csv("submission.csv", index=False)
